@@ -1,0 +1,16 @@
+[
+  {
+    "id": "example-se-2",
+    "role": "software-engineer",
+    "title": "Software Engineer - Backend",
+    "summary": "Backend engineer focused on Node.js, MongoDB, and distributed APIs.",
+    "skills": ["Node.js", "MongoDB", "Redis", "Docker"]
+  },
+  {
+    "id": "example-pm-1",
+    "role": "product-manager",
+    "title": "Product Manager - SaaS",
+    "summary": "Product manager driving roadmap, experimentation, and user growth.",
+    "skills": ["Roadmapping", "Analytics", "A/B Testing"]
+  }
+]
