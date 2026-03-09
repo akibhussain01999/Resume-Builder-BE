@@ -1,5 +1,6 @@
 const { StatusCodes } = require('http-status-codes');
 const crypto = require('crypto');
+const https = require('https');
 const User = require('../user/user.model');
 const ApiError = require('../../utils/ApiError');
 const env = require('../../config/env');
@@ -7,6 +8,8 @@ const { signAccessToken, signRefreshToken } = require('../../utils/jwt');
 const { sendEmailVerificationOtpEmail } = require('../../utils/mailService');
 
 const EMAIL_VERIFICATION_OTP_TTL_MS = 1000 * 60 * 5;
+const GOOGLE_TOKENINFO_URL = 'https://www.googleapis.com/oauth2/v3/tokeninfo';
+const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
 
 const sanitizeUser = (user) => ({
   id: user._id,
@@ -33,6 +36,83 @@ const createTokens = (user) => {
     accessToken: signAccessToken(payload),
     refreshToken: signRefreshToken(payload)
   };
+};
+
+const httpsGetJson = (url, headers = {}) =>
+  new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      {
+        headers
+      },
+      (res) => {
+        let data = '';
+
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          let parsed = null;
+          try {
+            parsed = data ? JSON.parse(data) : {};
+          } catch (error) {
+            return reject(new Error('Invalid JSON response from provider'));
+          }
+
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            return resolve(parsed);
+          }
+
+          return reject(
+            new Error(
+              `Provider request failed with status ${res.statusCode}: ${
+                parsed.error_description || parsed.error || 'Unknown error'
+              }`
+            )
+          );
+        });
+      }
+    );
+
+    req.on('error', reject);
+  });
+
+const throwInvalidGoogleToken = () => {
+  throw new ApiError(StatusCodes.UNAUTHORIZED, 'INVALID_GOOGLE_TOKEN', 'Invalid Google token');
+};
+
+const verifyGoogleAccessToken = async (accessToken) => {
+  try {
+    const tokenInfo = await httpsGetJson(
+      `${GOOGLE_TOKENINFO_URL}?access_token=${encodeURIComponent(accessToken)}`
+    );
+
+    if (env.googleClientId && tokenInfo.aud !== env.googleClientId) {
+      throwInvalidGoogleToken();
+    }
+
+    const userInfo = await httpsGetJson(GOOGLE_USERINFO_URL, {
+      Authorization: `Bearer ${accessToken}`
+    });
+
+    const email = userInfo.email ? String(userInfo.email).toLowerCase().trim() : '';
+    if (!email) {
+      throwInvalidGoogleToken();
+    }
+
+    if (tokenInfo.email && String(tokenInfo.email).toLowerCase() !== email) {
+      throwInvalidGoogleToken();
+    }
+
+    const name = (userInfo.name || '').trim() || email.split('@')[0];
+    return { email, name };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throwInvalidGoogleToken();
+  }
 };
 
 const register = async (payload) => {
@@ -113,6 +193,37 @@ const login = async (payload) => {
   };
 };
 
+const googleLogin = async ({ token }) => {
+  const profile = await verifyGoogleAccessToken(token);
+
+  let user = await User.findOne({ email: profile.email });
+
+  if (!user) {
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const passwordHash = await User.hashPassword(randomPassword);
+
+    user = await User.create({
+      name: profile.name,
+      email: profile.email,
+      passwordHash,
+      isEmailVerified: true,
+      emailVerifiedAt: new Date(),
+      marketingOptIn: false
+    });
+  } else if (!user.isEmailVerified) {
+    user.isEmailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || new Date();
+    user.emailVerificationTokenHash = null;
+    user.emailVerificationTokenExpiresAt = null;
+    await user.save();
+  }
+
+  return {
+    user: sanitizeUser(user),
+    tokens: createTokens(user)
+  };
+};
+
 const me = async (userId) => {
   const user = await User.findById(userId);
   if (!user) {
@@ -156,6 +267,7 @@ const logout = async () => ({ ok: true });
 module.exports = {
   register,
   login,
+  googleLogin,
   me,
   logout,
   verifyEmail

@@ -21,6 +21,15 @@ const login = asyncHandler(async (req, res) => {
   });
 });
 
+const googleLogin = asyncHandler(async (req, res) => {
+  const result = await authService.googleLogin(req.body);
+  return sendSuccess(res, {
+    statusCode: StatusCodes.OK,
+    message: 'Login successful',
+    data: result
+  });
+});
+
 const me = asyncHandler(async (req, res) => {
   const user = await authService.me(req.user.id);
   return sendSuccess(res, {
@@ -50,6 +59,7 @@ const verifyEmail = asyncHandler(async (req, res) => {
 module.exports = {
   register,
   login,
+  googleLogin,
   me,
   logout,
   verifyEmail

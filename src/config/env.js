@@ -17,6 +17,9 @@ const env = {
   brevoApiKey: process.env.BREVO_API_KEY || process.env.BREAVE_MAILER_KEY || '',
   senderEmail: process.env.SENDER_EMAIL || 'noreply@example.com',
   senderName: process.env.SENDER_NAME || 'Resume Builder',
+  googleClientId:
+    process.env.GOOGLE_CLIENT_ID ||
+    '1037774959324-leq8o6uai03rfhnrmmb6o957r0lr9n0t.apps.googleusercontent.com',
   allowDevEmailOtpFallback:
     process.env.ALLOW_DEV_EMAIL_OTP_FALLBACK === 'true' || nodeEnv !== 'production',
   adminSeedKey: process.env.ADMIN_SEED_KEY || ''

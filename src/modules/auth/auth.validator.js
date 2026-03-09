@@ -20,6 +20,14 @@ const loginSchema = Joi.object({
   query: Joi.object({}).default({})
 });
 
+const googleLoginSchema = Joi.object({
+  body: Joi.object({
+    token: Joi.string().required()
+  }).required(),
+  params: Joi.object({}).default({}),
+  query: Joi.object({}).default({})
+});
+
 const verifyEmailSchema = Joi.object({
   body: Joi.object({
     email: Joi.string().email().required(),
@@ -32,5 +40,6 @@ const verifyEmailSchema = Joi.object({
 module.exports = {
   registerSchema,
   loginSchema,
+  googleLoginSchema,
   verifyEmailSchema
 };
