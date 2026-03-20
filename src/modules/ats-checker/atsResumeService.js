@@ -11,6 +11,8 @@ import atsResumeModel from "./atsResumeModel.js";
 import os from "os";
 import path from "path";
 import { promises as fsPromises } from "fs";
+import { ObjectId } from "mongodb";
+import resumeModel from "../resume/resume.model.js";
 
 
 dotenv.config();
@@ -151,8 +153,77 @@ export const extractJson = (text) => {
     return JSON.parse(jsonString);
 };
 
+// Map raw parsed resume to resume template structure
+export const mapParsedResumeToTemplate = (parsed) => {
+    const experience = (parsed.experience || []).map(exp => {
+        if (typeof exp === "string") return { role: exp, company: "", years: "", bullets: [] };
+        return {
+            role: exp.role || exp.title || exp.position || exp.jobTitle || "",
+            company: exp.company || exp.organization || exp.employer || "",
+            years: exp.years || exp.period || exp.duration || exp.dates || "",
+            bullets: Array.isArray(exp.bullets) ? exp.bullets
+                : Array.isArray(exp.responsibilities) ? exp.responsibilities
+                : exp.description ? [exp.description] : []
+        };
+    });
+
+    const education = (parsed.education || []).map(edu => {
+        if (typeof edu === "string") return { degree: edu, school: "", year: "" };
+        return {
+            degree: edu.degree || edu.qualification || edu.field || edu.major || "",
+            school: edu.school || edu.institution || edu.university || edu.college || "",
+            year: edu.year || edu.graduationYear || edu.endYear || ""
+        };
+    });
+
+    const projects = (parsed.projects || []).map(proj => {
+        if (typeof proj === "string") return { name: proj, description: "", link: "" };
+        return {
+            name: proj.name || proj.title || proj.projectName || "",
+            description: proj.description || proj.summary || proj.details || "",
+            link: proj.link || proj.url || proj.github || ""
+        };
+    });
+
+    const achievements = (parsed.achievements || []).map(ach => {
+        if (typeof ach === "string") return { title: ach, description: "" };
+        return {
+            title: ach.title || ach.award || ach.achievement || ach.name || "",
+            description: ach.description || ach.detail || ach.summary || ""
+        };
+    });
+
+    const languages = (parsed.languages || []).map(lang =>
+        typeof lang === "string" ? { name: lang, level: "" } : { name: lang.name || "", level: lang.level || "" }
+    );
+
+    const summary = Array.isArray(parsed.summary)
+        ? parsed.summary.join(" ").trim()
+        : (parsed.summary || "");
+
+    return {
+        name: parsed.name || "",
+        title: (parsed.jobRoles && parsed.jobRoles[0]) || "",
+        location: parsed.location || "",
+        email: parsed.email || "",
+        phone: parsed.phone || "",
+        linkedin: parsed.linkedin || "",
+        summary,
+        skills: parsed.skills || [],
+        experience,
+        education,
+        certifications: parsed.certifications || [],
+        courses: parsed.courses || [],
+        languages,
+        strengths: parsed.strengths || [],
+        hobbies: parsed.interests || parsed.hobbies || [],
+        achievements,
+        projects
+    };
+};
+
 // ATS + AI Resume Analysis
-export const analyzeResume = async (resumeJson, jobDescription = "") => {
+export const analyzeResume = async (resumeJson, jobDescription = "", userId = "unknown_user") => {
    
 
     const prompt = `
@@ -203,10 +274,10 @@ CRITICAL RULES
 • give more detailed suggestions rather than just stating "Add more metrics" - specify what kind of metrics and how to present them.
 • give more bullet point improvement suggestions rather than just "Use stronger action verbs" - specify which verbs to use and how to rephrase the bullet.
 • For skills, identify which important industry skills are missing and suggest specific ones to add based on the job description.
-• find repetition issues (e.g. same bullet point repeated in multiple roles) and suggest consolidating or rephrasing to avoid redundancy.
-• for spelling and grammar issues, specify the exact issue and how to fix it (e.g. "Change 'mananged' to 'managed' in the second bullet point under Experience").
-• for vague sentences, specify exactly how to make them more clear and impactful (e.g. "Change 'Worked on improving API performance' to 'Improved API response time by 30% through optimizing database queries'").
-• return spelling and grammar issues with specific corrections, not just "Fix grammar".
+• find repetition issues — scan every word used across ALL bullet points and sections. For any action verb or significant word used 2 or more times, return it with an exact count and 3 alternative replacement words. Return as structured objects, not plain strings.
+• for spelling mistakes — scan the entire resume text. For every misspelled word found, return the exact wrong word, the correct spelling, and the sentence it appears in. NEVER return just "Fix grammar" — always return the specific word, correction, and location.
+• for grammar issues — return the exact incorrect phrase, the corrected version, and where it appears.
+• Do not group spelling and grammar together vaguely. Return each issue as a separate structured object.
 • For vague sentences, specify exactly how to make them more clear and impactful.
 • For formatting issues, specify exactly what the issue is and how to fix it (e.g. "Use consistent bullet point formatting with dashes and proper indentation").
 • Return ONLY valid JSON. No explanations outside JSON.
@@ -255,8 +326,30 @@ OUTPUT FORMAT FOR ATS ANALYSIS
 }
 ],
 "quantifying_impact_issues": ["Example quantifying impact issue"],
-"repetition_issues": ["Example repetition issue"],
-"spelling_grammar_issues": ["Example spelling or grammar issue"],
+
+"repetition_issues": [
+{
+"word": "optimized",
+"count": 4,
+"replacements": ["improved", "streamlined", "enhanced"]
+}
+],
+
+"spelling_mistakes": [
+{
+"wrong": "mananged",
+"correct": "managed",
+"context": "mananged a team of 5 engineers"
+}
+],
+
+"grammar_issues": [
+{
+"original": "Responsible for managing team",
+"corrected": "Managed and led a cross-functional team",
+"location": "Experience — Senior Developer role, bullet 2"
+}
+],
 "vague_sentences":[
 {
 "original":"Example sentence",
@@ -341,12 +434,19 @@ Return ONLY JSON.
     }
 
     try {
-        await atsResumeModel.create({
-            user_id: resumeJson.userId || '1234567890abcdef12345678', // placeholder user ID
-            resume_json: resumeJson,
-            ats_result: JSON.parse(aiText),
-        });
-        return extractJson(aiText);
+            const structuredResume = mapParsedResumeToTemplate(resumeJson);
+            const createdResume = await atsResumeModel.create({
+                user_id: userId,
+                resume_json: structuredResume,
+                ats_result: JSON.parse(aiText),
+            });
+
+            return {
+                resumeId: createdResume._id,
+                userId : createdResume.user_id,
+                atsResult: extractJson(aiText),
+                structuredResume: structuredResume
+            };
     } catch (err) {
         console.warn("Failed to parse AI JSON:", err, "Raw AI response:", aiText);
         return { success: false, data: {}, message: "AI response missing or malformed." };
@@ -354,9 +454,252 @@ Return ONLY JSON.
 };
 
 
+export const analyzeResumeWithAI = async ({ resumeId, userId, atsResult, structuredResume, jobDescription, templateId }) => {
+   
+    const rewritePrompt = `
+You are an **elite ATS resume rewriting AI and senior recruiter**.
 
+Your job is to **rewrite and optimize the resume to significantly improve ATS score**, using the ATS report.
 
+---------------------------------------------------------------------
 
+CRITICAL RULES
+
+• DO NOT change JSON structure
+• DO NOT rename fields
+• DO NOT remove fields
+• DO NOT add new fields
+
+• DO NOT change:
+  - company names
+  - roles
+  - education
+
+• DO NOT invent fake experience
+
+• ONLY improve content quality
+
+---------------------------------------------------------------------
+
+SMART SKILL OPTIMIZATION (IMPORTANT)
+
+• DO NOT use static or hardcoded skills
+• ONLY use:
+   - existing resume skills
+   - ATS "missing_keywords"
+   - ATS "suggested_keywords"
+
+• Remove duplicates (NodeJS vs Node.js)
+• Normalize naming (JavaScript, HTML5, etc.)
+
+---------------------------------------------------------------------
+
+ATS SCORE IMPROVEMENT TARGET
+
+Current ATS score: ${atsResult.ats_score}
+
+Your goal:
+• Increase ATS score to **90 or above**
+• If 90 is not realistically achievable, maximize score as high as possible
+
+To achieve this:
+• Improve keyword coverage
+• Add measurable achievements
+• Strengthen bullet points
+• Fix all ATS issues
+
+---------------------------------------------------------------------
+
+STRUCTURE (STRICT — DO NOT BREAK)
+
+Return EXACT SAME JSON structure as input.
+
+⚠️ Any structural change = INVALID
+
+---------------------------------------------------------------------
+
+IMPROVEMENT INSTRUCTIONS
+
+1. SUMMARY
+• Rewrite into 2–4 strong sentences
+• Include relevant keywords dynamically
+• Highlight impact + experience
+
+2. SKILLS
+• Remove duplicates
+• Add missing keywords ONLY from ATS report
+• Keep clean, relevant list (10–16 max)
+
+3. EXPERIENCE (MOST IMPORTANT)
+
+Rewrite EVERY bullet using:
+
+Action Verb + Task + Tool + Measurable Result
+
+Rules:
+• Add metrics where possible (%, time, scale, impact)
+• Fix weak and vague bullets from ATS report
+• Avoid repetition
+• Keep 4–6 bullets per role
+
+4. ACHIEVEMENTS
+• Add measurable outcomes
+• Make concise and impactful
+
+5. PROJECTS
+• Improve descriptions
+• Highlight business/technical impact
+
+6. FIX ALL ATS ISSUES
+
+You MUST fix:
+• weak bullet points
+• vague sentences
+• missing metrics
+• repetition issues
+• formatting issues
+
+7. SECTION FIXES
+
+If ATS says section missing:
+• Add content ONLY if section exists but is empty
+• DO NOT create new fields
+
+---------------------------------------------------------------------
+
+INPUTS
+
+ATS REPORT:
+
+${JSON.stringify(atsResult, null, 2)}
+
+--------------------------------------------------
+
+ORIGINAL RESUME JSON:
+
+${JSON.stringify(structuredResume, null, 2)}
+
+---------------------------------------------------------------------
+
+OUTPUT FORMAT
+
+Return a single JSON object with exactly two keys:
+
+{
+  "improved_resume": { ...exact same structure as ORIGINAL RESUME JSON with improved content... },
+  "updated_ats_result": {
+    "ats_score": number,
+    "score_breakdown": {
+      "keyword_optimization": number,
+      "achievements_metrics": number,
+      "bullet_strength": number,
+      "skills_coverage": number,
+      "experience_clarity": number,
+      "resume_structure": number
+    },
+    "improvements_made": ["List of key improvements applied"],
+    "remaining_issues": ["Any issues that could not be fixed"]
+  }
+}
+
+RULES:
+• "improved_resume" must have EXACT SAME structure as the original resume JSON — no added or removed fields
+• "updated_ats_result.ats_score" must reflect the actual quality of the improved resume — be honest
+• "score_breakdown" scores must add up consistently with the overall ats_score
+• Return ONLY valid JSON — no explanation, no text outside JSON
+
+---------------------------------------------------------------------
+
+FINAL CHECK BEFORE OUTPUT
+
+Ensure:
+• No duplicate skills
+• Strong bullet points with metrics
+• Keywords from ATS included naturally
+• Content is ATS optimized
+• Structure unchanged
+• Both keys ("improved_resume" and "updated_ats_result") are present
+
+`;
+    const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: rewritePrompt }],
+        temperature: 0,
+        max_tokens: 4500,
+    });
+
+    const aiText = response?.choices?.[0]?.message?.content;
+    if (!aiText) {
+        return { success: false, data: {}, message: "AI response missing." };
+    }
+
+    try {
+        const parsed = extractJson(aiText);
+        const rewrittenData = parsed.improved_resume;
+        const updatedAtsResult = parsed.updated_ats_result;
+
+        const atsRecord = await atsResumeModel.findById(new ObjectId(String(resumeId)));
+        const existingImprovedResumeId = atsRecord?.improved_resume_id;
+
+        let improvedResumeId;
+        let savedResume;
+
+        if (existingImprovedResumeId) {
+            // Update existing improved resume
+            savedResume = await resumeModel.findByIdAndUpdate(
+                existingImprovedResumeId,
+                {
+                    title: rewrittenData.title || structuredResume.title || "Improved Resume",
+                    data: rewrittenData,
+                },
+                { new: true }
+            );
+            improvedResumeId = existingImprovedResumeId;
+        } else {
+            // Create new improved resume
+            savedResume = await resumeModel.create({
+                userId: new ObjectId(String(userId)),
+                title: rewrittenData.title || structuredResume.title || "Improved Resume",
+                templateId: templateId || "sidebar",
+                themeColor: "#3eb489",
+                data: rewrittenData,
+            });
+            improvedResumeId = savedResume._id;
+        }
+
+        await resumeModel.findByIdAndUpdate(
+            new ObjectId(String(savedResume._id)),
+            {
+                resumeId: `resume_${atsRecord._id}`,
+                
+            }
+        );
+
+        // Update ATS record with improved resume reference and new ATS result
+        await atsResumeModel.findByIdAndUpdate(
+            new ObjectId(String(resumeId)),
+            {
+                improved_resume_json: rewrittenData,
+                improved_resume_id: improvedResumeId,
+                ats_result: updatedAtsResult,
+            }
+        );
+
+        return {
+            resumeData: {
+                ...rewrittenData,
+                templateId: savedResume?.templateId || "sidebar",
+                themeColor: savedResume?.themeColor || "#3eb489",
+                hiddenSections: savedResume?.hiddenSections || [],
+                resumeId: `resume_${atsRecord._id}`,
+            },
+            updatedAtsResult,
+        };
+    } catch (err) {
+        console.warn("Failed to parse AI JSON:", err, "Raw AI response:", aiText);
+        return { success: false, data: {}, message: "AI response missing or malformed." };
+    }
+};
 
 
 

@@ -5,6 +5,7 @@ const atsResumeSchema = new mongoose.Schema({
   resume_json: { type: Object, required: false },
   ats_result: { type: Object, required: false },
   improved_resume_json: { type: Object, required: false },
+  improved_resume_id: { type: mongoose.Schema.Types.ObjectId, ref: "Resume", required: false },
   created_at: { type: Date, default: Date.now },
   expires_at: { type: Date }
 });
