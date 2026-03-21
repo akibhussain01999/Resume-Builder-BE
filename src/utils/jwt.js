@@ -8,8 +8,11 @@ const signRefreshToken = (payload) =>
 
 const verifyAccessToken = (token) => jwt.verify(token, env.jwtAccessSecret);
 
+const verifyRefreshToken = (token) => jwt.verify(token, env.jwtRefreshSecret);
+
 module.exports = {
   signAccessToken,
   signRefreshToken,
-  verifyAccessToken
+  verifyAccessToken,
+  verifyRefreshToken
 };

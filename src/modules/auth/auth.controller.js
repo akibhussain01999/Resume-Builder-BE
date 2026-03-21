@@ -56,11 +56,21 @@ const verifyEmail = asyncHandler(async (req, res) => {
   });
 });
 
+const refresh = asyncHandler(async (req, res) => {
+  const result = await authService.refresh({ refreshToken: req.body.refreshToken });
+  return sendSuccess(res, {
+    statusCode: StatusCodes.OK,
+    message: 'Token refreshed',
+    data: result
+  });
+});
+
 module.exports = {
   register,
   login,
   googleLogin,
   me,
   logout,
-  verifyEmail
+  verifyEmail,
+  refresh
 };

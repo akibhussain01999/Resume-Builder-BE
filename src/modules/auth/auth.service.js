@@ -4,7 +4,7 @@ const https = require('https');
 const User = require('../user/user.model');
 const ApiError = require('../../utils/ApiError');
 const env = require('../../config/env');
-const { signAccessToken, signRefreshToken } = require('../../utils/jwt');
+const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
 const { sendEmailVerificationOtpEmail } = require('../../utils/mailService');
 
 const EMAIL_VERIFICATION_OTP_TTL_MS = 1000 * 60 * 5;
@@ -264,11 +264,36 @@ const verifyEmail = async ({ email, otp }) => {
 
 const logout = async () => ({ ok: true });
 
+const refresh = async ({ refreshToken }) => {
+  if (!refreshToken) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'MISSING_REFRESH_TOKEN', 'Refresh token is required');
+  }
+
+  let payload;
+  try {
+    payload = verifyRefreshToken(refreshToken);
+  } catch {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token');
+  }
+
+  const user = await User.findById(payload.sub);
+  if (!user) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token');
+  }
+
+  if (payload.tokenVersion !== user.refreshTokenVersion) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'REFRESH_TOKEN_REVOKED', 'Refresh token has been revoked');
+  }
+
+  return { tokens: createTokens(user) };
+};
+
 module.exports = {
   register,
   login,
   googleLogin,
   me,
   logout,
-  verifyEmail
+  verifyEmail,
+  refresh
 };
