@@ -118,7 +118,11 @@ const verifyGoogleAccessToken = async (accessToken) => {
 const register = async (payload) => {
   const existing = await User.findOne({ email: payload.email });
   if (existing) {
-    throw new ApiError(StatusCodes.CONFLICT, 'EMAIL_EXISTS', 'Email already registered');
+    if (!existing.isEmailVerified) {
+      await User.deleteOne({ _id: existing._id });
+    } else {
+      throw new ApiError(StatusCodes.CONFLICT, 'EMAIL_EXISTS', 'Email already registered');
+    }
   }
 
   const verificationOtp = createEmailVerificationOtp();

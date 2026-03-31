@@ -88,12 +88,19 @@ export const readUploadedFile = async (fileBuffer, fileInfo = {}) => {
 
 export const parseResume = async (resumeText) => {
 
-    const chunkSize = 6000; // safe token size
-    const chunks = [];
-
-    for (let i = 0; i < resumeText.length; i += chunkSize) {
-        chunks.push(resumeText.slice(i, i + chunkSize));
-    }
+    // Most resumes are 1-3 pages (2000-6000 chars). GPT-4o-mini supports 128K input tokens.
+    // Sending full text preserves document structure (section headers, bullet associations).
+    // Only chunk if text is extremely long (>15000 chars).
+    const chunkSize = 15000;
+    const chunks = resumeText.length <= chunkSize
+        ? [resumeText]
+        : (() => {
+            const result = [];
+            for (let i = 0; i < resumeText.length; i += chunkSize) {
+                result.push(resumeText.slice(i, i + chunkSize));
+            }
+            return result;
+        })();
 
     let merged = {
         name: "",
@@ -169,12 +176,14 @@ export const parseResume = async (resumeText) => {
             if (!str || !str.trim()) return [];
             const trimmed = str.trim();
 
-            // All Unicode dots, bullets, pipes, dashes used as separators in resumes:
+            // All Unicode dots, bullets, pipes used as separators in resumes:
             // · (U+00B7) • (U+2022) ‧ (U+2027) ∙ (U+2219) ⋅ (U+22C5) ● (U+25CF) ◦ (U+25E6)
             // ○ (U+25CB) ▪ (U+25AA) ▸ (U+25B8) ► (U+25BA) ★ (U+2605) ✦ (U+2726) ✧ (U+2727)
-            // ◆ (U+25C6) ◇ (U+25C7) ⬥ (U+2B25) – (U+2013) — (U+2014) ⁃ (U+2043)
-            // | (pipe) ; (semicolon) / (slash when between short items)
-            const separators = /\s*[·•‧∙⋅●◦○▪▸►★✦✧◆◇⬥–—⁃|;]\s*/;
+            // ◆ (U+25C6) ◇ (U+25C7) ⬥ (U+2B25) ⁃ (U+2043)
+            // | (pipe) ; (semicolon)
+            // NOTE: – (en-dash) and — (em-dash) are NOT separators — they are connectors
+            // used in "Course – Provider", "Project – Location", "2019 – 2023" date ranges
+            const separators = /\s*[·•‧∙⋅●◦○▪▸►★✦✧◆◇⬥⁃|;]\s*/;
 
             if (separators.test(trimmed)) {
                 const parts = trimmed.split(separators).map(s => s.trim()).filter(Boolean);
@@ -434,6 +443,16 @@ export const parseResume = async (resumeText) => {
             "values"
         );
 
+        // Filter out language proficiency terms that sometimes leak into strengths
+        const proficiencyTerms = new Set([
+            "native", "fluent", "conversational", "intermediate", "beginner",
+            "elementary", "proficient", "advanced", "basic",
+            "a1", "a2", "b1", "b2", "c1", "c2"
+        ]);
+        normalized.strengths = normalized.strengths.filter(
+            s => typeof s !== "string" || !proficiencyTerms.has(s.toLowerCase().trim())
+        );
+
         normalized.interests = collectArrays(
             "interests", "hobbies", "hobbiesAndInterests", "hobbies_and_interests",
             "extracurricularActivities", "extracurricular_activities", "activities",
@@ -510,11 +529,40 @@ export const parseResume = async (resumeText) => {
     for (const chunk of chunks) {
 
         const prompt = `
-You are a resume parser AI.
+You are a resume parser AI that handles ANY resume format from ANY country or platform.
 
 Extract information from the resume text below.
 
 IMPORTANT: Resumes globally use many different section header names, abbreviations, and formats. You MUST recognize ALL of these and map them to the correct field. Headers may appear in UPPERCASE, Title Case, lowercase, with or without colons, dashes, icons, emojis, or special characters. Ignore formatting — match by meaning.
+
+CRITICAL — HANDLING DIVERSE RESUME STRUCTURES:
+Resumes come in wildly different formats. You MUST handle ALL of these patterns:
+
+1. EXPERIENCE FORMAT VARIATIONS:
+   - Standard: Each company has its own bullet points listed directly below it.
+   - Shared responsibilities: Multiple companies/positions listed first, then ONE "Job Responsibilities" or "Roles & Responsibilities" section with combined bullets. In this case, attach ALL shared bullets to EVERY experience entry (they represent the candidate's overall responsibilities across roles).
+   - Inline format: "Company Name | Role | Duration" on one line, bullets below.
+   - Table format: COMPANY/POSITION/DURATION in labeled rows.
+   - You MUST always return experience as an array of objects: { "role": "", "company": "", "years": "", "bullets": [] }
+
+2. EDUCATION ANYWHERE:
+   - Education may appear under a header OR inline at the top (e.g., "BS Electrical Engineering – University of Gujrat (2011–2015)").
+   - It may appear next to the name/contact info, not under a section header.
+   - Always extract it as: { "degree": "", "school": "", "year": "" }
+
+3. PROJECTS WITH SUB-CATEGORIES:
+   - Projects may be grouped under sub-headers like "Government Projects", "Community Projects", "Healthcare Projects".
+   - Ignore sub-category headers — collect ALL projects into a single flat "projects" array.
+   - Projects may be just names (no descriptions) — that is fine, return them as: { "name": "Project Name", "description": "", "link": "" }
+
+4. SKILLS WITH COMPOUND ENTRIES:
+   - Skills may be compound: "Project Supervision, Quality Assurance & Commissioning"
+   - Split by comma into individual skills: ["Project Supervision", "Quality Assurance & Commissioning"]
+   - But do NOT split on "&" within a single skill — "Quality Assurance & Commissioning" is ONE skill.
+
+5. SECTIONS MAY BE MISSING:
+   - Not all resumes have every section. If a section is missing, return an empty array [].
+   - Do NOT invent or fabricate content for missing sections.
 
 SUMMARY (put in "summary"):
 "About", "About Me", "About Us", "Summary", "Professional Summary", "Executive Summary", "Career Summary", "Resume Summary", "Objective", "Career Objective", "Professional Objective", "Job Objective", "Personal Statement", "Personal Summary", "Overview", "Professional Overview", "Career Overview", "Bio", "Biography", "Introduction", "Self Introduction", "Elevator Pitch", "Value Proposition", "What I Do", "Who I Am", "Brief", "Professional Brief", "Mission Statement", "Career Goal", "Goals", "Career Goals", "Ambition", "Aspiration", "Description", "Self Description", "Candidature", "Motivation", "Cover Note", "Opening Statement", "Headline", "Tagline", "Branding Statement", "Personal Brand"
@@ -527,21 +575,26 @@ SKILLS (put in "skills"):
 
 EXPERIENCE (put in "experience"):
 "Experience", "Work Experience", "Employment History", "Professional Experience", "Career History", "Work History", "Employment", "Relevant Experience", "Industry Experience", "Job Experience", "Job History", "Positions Held", "Positions", "Employment Record", "Employment Details", "Career Experience", "Working Experience", "Work Record", "Professional Background", "Background", "Career Background", "Internships", "Internship Experience", "Internship", "Trainee Experience", "Apprenticeship", "Apprenticeships", "Industrial Training", "Placement", "Placements", "On-the-Job Training", "OJT", "Practical Experience", "Field Experience", "Clinical Experience", "Teaching Experience", "Research Experience", "Military Experience", "Military Service", "Service History", "Volunteer Experience", "Voluntary Experience", "Volunteering", "Volunteer Work", "Community Service", "Community Involvement", "Social Work", "Pro Bono", "Freelance Experience", "Freelance Work", "Consulting Experience", "Contract Work", "Temporary Work", "Part-Time Experience", "Previous Employment", "Past Roles", "Roles & Responsibilities", "Professional History", "Career Progression", "Where I Worked", "Where I Have Worked", "My Experience", "Engagement History"
+IMPORTANT: ALWAYS return each experience entry as an object { "role": "", "company": "", "years": "", "bullets": [] }. NEVER return experience as plain strings. If responsibilities are listed separately from companies (shared "Job Responsibilities" section), attach the bullets to every experience entry.
 
 EDUCATION (put in "education"):
 "Education", "Academic Background", "Academic Qualifications", "Qualifications", "Academics", "Educational Background", "Education & Qualifications", "Educational Qualifications", "Academic History", "Academic Record", "Academic Details", "Academic Credentials", "Formal Education", "Higher Education", "University", "University Education", "College", "College Education", "School", "Schooling", "School Education", "Degrees", "Degree", "Studies", "Study", "Academic Studies", "Field of Study", "Major", "Majors", "Specialization", "Diploma", "Diplomas", "Post-Graduate", "Postgraduate", "Graduate Studies", "Undergraduate", "PhD", "Doctorate", "Masters", "Bachelors", "B.Tech", "B.E.", "B.Sc", "B.A.", "M.Tech", "M.E.", "M.Sc", "M.A.", "MBA", "BBA", "BCA", "MCA", "MBBS", "LLB", "Education & Training", "Academic Achievements", "Scholarly Background", "Learning", "Continuous Learning", "Educational History", "My Education", "Where I Studied", "Alma Mater", "10th", "12th", "HSC", "SSC", "CBSE", "ICSE", "Board Exams", "GPA", "CGPA", "Percentage", "Class", "Division", "Semester"
+IMPORTANT: Education may appear ANYWHERE in the resume — under a header, inline near contact info, or at the top/bottom. Always extract it as: { "degree": "", "school": "", "year": "" }. Example: "BS Electrical Engineering – University of Gujrat (2011-2015)" should become { "degree": "BS Electrical Engineering", "school": "University of Gujrat", "year": "2011-2015" }.
 
 PROJECTS (put in "projects"):
 "Projects", "Personal Projects", "Portfolio", "Key Projects", "Side Projects", "Academic Projects", "Professional Projects", "Project Work", "Project Experience", "Project Details", "Project History", "Major Projects", "Minor Projects", "Mini Projects", "Capstone Project", "Capstone", "Thesis", "Dissertation", "Research Projects", "Open Source", "Open Source Contributions", "GitHub Projects", "Contributions", "Notable Projects", "Selected Projects", "Featured Projects", "Showcase", "Work Samples", "Sample Work", "Case Studies", "Assignments", "Lab Projects", "Group Projects", "Individual Projects", "Collaborative Projects", "Client Projects", "Freelance Projects", "Independent Projects", "Technical Projects", "Engineering Projects", "Development Projects", "My Projects", "What I Built", "Portfolio Projects", "Demos", "Prototypes", "POC", "Proof of Concept"
+IMPORTANT: Projects may be grouped under sub-categories like "Government Projects", "Community Projects", "Healthcare Projects". Ignore sub-category headers and collect ALL projects into a flat array. Return each as: { "name": "", "description": "", "link": "" }. If a project has no description, return an empty string for description.
 
 CERTIFICATIONS (put in "certifications"):
 "Certifications", "Certificates", "Professional Certifications", "Licenses", "Accreditations", "Licenses & Certifications", "Certification & Licenses", "Professional Licenses", "Industry Certifications", "Technical Certifications", "Certified", "Credentials", "Professional Credentials", "Accredited Certifications", "Digital Certificates", "Digital Badges", "Badges", "Verified Certifications", "Online Certifications", "Certificate Programs", "Certification Programs", "Licensed", "Chartered", "Registered", "Board Certifications", "Licensure", "Professional Accreditations", "My Certifications", "Qualifications & Certifications", "Awards & Certifications"
 
 COURSES (put in "courses"):
 "Courses", "Training", "Professional Development", "Workshops", "Continuing Education", "Online Courses", "Relevant Coursework", "Coursework", "Training Programs", "Training & Development", "Seminars", "Webinars", "Bootcamp", "Bootcamps", "Coding Bootcamp", "Classes", "Electives", "Relevant Courses", "Additional Training", "Specialized Training", "Technical Training", "Skill Development", "Learning & Development", "L&D", "MOOC", "MOOCs", "Online Learning", "Self-Study", "Self Learning", "Independent Study", "Professional Training", "Corporate Training", "In-House Training", "External Training", "Conferences Attended", "Conferences", "Symposiums", "Colloquia", "Masterclass", "Masterclasses", "My Courses", "What I Learned", "Professional Education", "Continuous Professional Development", "CPD", "Nanodegree", "Specialization Courses", "Micro-Credentials"
+IMPORTANT: For courses, keep the course name and institution/provider as a SINGLE string. Example: "Product Strategy – Reforge (2023)" should be ONE entry, NOT split into "Product Strategy" and "Reforge (2023)". The dash separates course from provider, not different courses.
 
 LANGUAGES (put in "languages"):
 "Languages", "Language Proficiency", "Language Skills", "Languages Known", "Languages Spoken", "Linguistic Skills", "Linguistic Proficiency", "Language Competency", "Language Abilities", "Foreign Languages", "Communication Languages", "Multilingual", "Bilingual", "Mother Tongue", "Native Language", "First Language", "Second Language", "Spoken Languages", "Written Languages", "Language Fluency", "Fluency", "My Languages", "Languages I Speak", "Tongue"
+IMPORTANT: For languages, ALWAYS include the proficiency level WITH the language name as a SINGLE string if one is mentioned. Example: "English - Native" or "Spanish (Conversational)" should be ONE entry, NOT split into separate entries. Proficiency levels like "Native", "Fluent", "Conversational", "Intermediate", "Beginner", "A1", "A2", "B1", "B2", "C1", "C2" belong WITH their language, NOT in strengths or any other field.
 
 ACHIEVEMENTS (put in "achievements"):
 "Achievements", "Accomplishments", "Awards", "Honors", "Recognition", "Awards & Achievements", "Key Achievements", "Professional Achievements", "Career Achievements", "Notable Achievements", "Milestones", "Career Milestones", "Awards & Honors", "Honors & Awards", "Awards & Recognition", "Distinctions", "Accolades", "Merits", "Prizes", "Trophies", "Medals", "Scholarships", "Fellowships", "Grants", "Dean's List", "Honor Roll", "Academic Awards", "Academic Honors", "Professional Awards", "Industry Awards", "Competition Wins", "Hackathon Wins", "Hackathons", "Patent", "Patents", "Publications", "Research Publications", "Published Work", "Papers", "Journal Papers", "Conference Papers", "Presentations", "Speaking Engagements", "Keynotes", "Talks", "Guest Lectures", "Contributions to Industry", "Impact", "My Achievements", "What I Achieved", "Results", "Key Results", "Outcomes", "Highlights", "Career Highlights", "Professional Highlights"
@@ -561,7 +614,7 @@ CONTACT INFO:
 - For job title/roles: "Title", "Designation", "Role", "Position", "Job Title", "Current Role", "Current Position", "Professional Title", "Headline" or text appearing directly below the name as a subtitle
 
 CRITICAL — SPLITTING DELIMITED VALUES:
-Resumes often list items separated by · • | , ; – — or similar characters.
+Resumes often list items separated by · • | , ; or similar bullet/pipe characters.
 You MUST split these into INDIVIDUAL array elements. NEVER return them as a single combined string.
 Example: if the resume says "Podcasting · Trail running · Travel writing · Cooking"
 WRONG: ["Podcasting · Trail running · Travel writing · Cooking"]
@@ -569,8 +622,12 @@ CORRECT: ["Podcasting", "Trail running", "Travel writing", "Cooking"]
 This applies to ALL array fields: skills, interests, hobbies, strengths, languages, certifications, courses, etc.
 Also watch for line breaks in PDF text that split one item across two lines — rejoin them before splitting.
 Example: "Strategic Storytelling · Campaign\nAnalytics · Creative Direction" should become ["Strategic Storytelling", "Campaign Analytics", "Creative Direction"]
+NOTE: Do NOT split on – (en-dash) or — (em-dash). These are connectors, not separators:
+- "Product Strategy – Reforge (2023)" is ONE course entry
+- "Presidential Guard Command – Nada Al Sheba Camp" is ONE project name
+- "2019 – 2023" is a date range
 
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON with this structure (no extra text before or after the JSON):
 
 {
   "name": "",
@@ -579,10 +636,10 @@ Return ONLY valid JSON with this structure:
   "location": "",
   "linkedin": "",
   "jobRoles": [],
-  "skills": [],
-  "experience": [],
-  "education": [],
-  "projects": [],
+  "skills": ["skill1", "skill2"],
+  "experience": [{ "role": "", "company": "", "years": "", "bullets": [] }],
+  "education": [{ "degree": "", "school": "", "year": "" }],
+  "projects": [{ "name": "", "description": "", "link": "" }],
   "summary": [],
   "achievements": [],
   "strengths": [],
@@ -605,7 +662,7 @@ ${chunk}
                 messages: [{ role: "user", content: prompt }],
                 response_format: { type: "json_object" },
                 temperature: 0,
-                max_tokens: 2500
+                max_tokens: 4000
             });
 
             const jsonText = response?.choices?.[0]?.message?.content;
@@ -676,7 +733,44 @@ const parseAiResponseWithRetry = (aiText, maxRetries = 3) => {
         errors.push(`Code fence extract: ${err.message}`);
     }
 
-    // Strategy 3: Find first '{' to last '}' and parse
+    // Strategy 3: Truncate at error position (handles "after JSON at position X")
+    try {
+        const posMatch = errors[0]?.match(/at position (\d+)/);
+        if (posMatch) {
+            const pos = parseInt(posMatch[1], 10);
+            const truncated = aiText.substring(0, pos).trim();
+            return JSON.parse(truncated);
+        }
+    } catch (err) {
+        errors.push(`Truncate at position: ${err.message}`);
+    }
+
+    // Strategy 4: Balanced brace matching — find where the top-level JSON object actually closes
+    try {
+        const start = aiText.indexOf('{');
+        if (start !== -1) {
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+            let end = -1;
+            for (let i = start; i < aiText.length; i++) {
+                const ch = aiText[i];
+                if (escape) { escape = false; continue; }
+                if (ch === '\\' && inString) { escape = true; continue; }
+                if (ch === '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (ch === '{') depth++;
+                else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
+            }
+            if (end !== -1) {
+                return JSON.parse(aiText.slice(start, end + 1));
+            }
+        }
+    } catch (err) {
+        errors.push(`Balanced brace: ${err.message}`);
+    }
+
+    // Strategy 5: Find first '{' to last '}' and parse
     try {
         const start = aiText.indexOf('{');
         const end = aiText.lastIndexOf('}');
@@ -687,23 +781,38 @@ const parseAiResponseWithRetry = (aiText, maxRetries = 3) => {
         errors.push(`Brace extract: ${err.message}`);
     }
 
-    // Strategy 4: Clean common issues (trailing commas, single-line comments) and retry
+    // Strategy 6: Clean common issues (trailing commas, single-line comments) and retry
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
             let cleaned = aiText;
             // Remove markdown code fences
             cleaned = cleaned.replace(/```(?:json)?\s*/g, '').replace(/```/g, '');
-            // Extract from first { to last }
+            // Balanced brace extraction on cleaned text
             const start = cleaned.indexOf('{');
-            const end = cleaned.lastIndexOf('}');
-            if (start === -1 || end <= start) continue;
+            if (start === -1) continue;
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+            let end = -1;
+            for (let i = start; i < cleaned.length; i++) {
+                const ch = cleaned[i];
+                if (escape) { escape = false; continue; }
+                if (ch === '\\' && inString) { escape = true; continue; }
+                if (ch === '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (ch === '{') depth++;
+                else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
+            }
+            if (end === -1) continue;
             cleaned = cleaned.slice(start, end + 1);
             // Remove trailing commas before } or ]
             cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
             // Remove single-line comments
             cleaned = cleaned.replace(/\/\/.*$/gm, '');
-            // Fix unescaped newlines inside string values
-            cleaned = cleaned.replace(/\n/g, '\\n');
+            // Fix unescaped newlines inside JSON string values (not structural newlines)
+            cleaned = cleaned.replace(/"([^"]*)\n([^"]*)"/g, (match) =>
+                match.replace(/\n/g, ' ')
+            );
             // Try to parse the cleaned version
             return JSON.parse(cleaned);
         } catch (err) {
@@ -973,21 +1082,15 @@ OUTPUT FORMAT FOR ATS ANALYSIS
 
 }
 
-----------------------------------------------------------------------
-IMPROVED RESUME JSON
-
-Based on the analysis, provide an improved version of the resume JSON with specific enhancements to each section. For example, if the experience section is weak, rewrite it with stronger bullet points and added metrics. If the skills section is missing important keywords, add those keywords to the skills list. The improved resume JSON should reflect all the suggested improvements from the analysis.
-
-
-
-Return ONLY JSON.
+Return ONLY the ATS analysis JSON above. No extra text, no improved resume — just the analysis.
 `;
     return withRetry(async () => {
         const response = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" },
             temperature: 0,
-            max_tokens: 3500,
+            max_tokens: 4096,
         });
 
         const aiText = response?.choices?.[0]?.message?.content;
