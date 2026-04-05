@@ -22,7 +22,11 @@ const env = {
     '1037774959324-leq8o6uai03rfhnrmmb6o957r0lr9n0t.apps.googleusercontent.com',
   allowDevEmailOtpFallback:
     process.env.ALLOW_DEV_EMAIL_OTP_FALLBACK === 'true' || nodeEnv !== 'production',
-  adminSeedKey: process.env.ADMIN_SEED_KEY || ''
+  adminSeedKey: process.env.ADMIN_SEED_KEY || '',
+  adminJwtSecret: process.env.ADMIN_JWT_SECRET || process.env.JWT_ACCESS_SECRET || '',
+  adminJwtExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '8h',
+  adminRefreshSecret: process.env.ADMIN_REFRESH_SECRET || process.env.JWT_REFRESH_SECRET || '',
+  adminRefreshExpiresIn: process.env.ADMIN_REFRESH_EXPIRES_IN || '30d'
 };
 
 module.exports = env;

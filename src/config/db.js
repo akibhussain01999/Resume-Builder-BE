@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const env = require('./env');
+const logger = require('./logger');
 
 const connectDatabase = async () => {
   if (!env.mongoUri) {
@@ -10,6 +11,8 @@ const connectDatabase = async () => {
     maxPoolSize: 20,
     serverSelectionTimeoutMS: 5000
   });
+
+  logger.info('Connected to MongoDB');
 };
 
 module.exports = { connectDatabase };

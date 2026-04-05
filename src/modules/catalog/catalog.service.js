@@ -4,6 +4,7 @@ const TemplateCategory = require('./templateCategory.model');
 const ResumeExample = require('./resumeExample.model');
 const ApiError = require('../../utils/ApiError');
 const { StatusCodes } = require('http-status-codes');
+const logger = require('../../config/logger');
 
 const listTemplates = async (query) => {
   const filter = query.type ? { type: query.type } : {};
@@ -48,7 +49,9 @@ const createTemplateCategory = async (payload) => {
     throw new ApiError(StatusCodes.CONFLICT, 'CATEGORY_EXISTS', 'Template category already exists');
   }
 
-  return TemplateCategory.create(payload);
+  const category = await TemplateCategory.create(payload);
+  logger.info(`Template category created: ${category.id}`);
+  return category;
 };
 
 const createTemplate = async (payload) => {
@@ -57,7 +60,9 @@ const createTemplate = async (payload) => {
     throw new ApiError(StatusCodes.CONFLICT, 'TEMPLATE_EXISTS', 'Template already exists');
   }
 
-  return Template.create(payload);
+  const template = await Template.create(payload);
+  logger.info(`Template created: ${template.id}`);
+  return template;
 };
 
 const createResumeExample = async (payload) => {

@@ -3,6 +3,7 @@ const PDFDocument = require('pdfkit');
 const ApiError = require('../../utils/ApiError');
 const Resume = require('../resume/resume.model');
 const CoverLetter = require('../cover-letter/coverLetter.model');
+const logger = require('../../config/logger');
 
 const writePdfFromLines = (res, filename, lines) => {
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
@@ -33,6 +34,8 @@ const generateResumePdf = async ({ userId, resumeId, res }) => {
     JSON.stringify(resume.data, null, 2)
   ];
 
+  logger.info(`Generating PDF for resume ${resumeId}, user ${userId}`);
+
   return writePdfFromLines(res, `${resume.resumeId}.pdf`, lines);
 };
 
@@ -49,6 +52,8 @@ const generateCoverLetterPdf = async ({ userId, coverLetterId, res }) => {
     '',
     JSON.stringify(letter.data, null, 2)
   ];
+
+  logger.info(`Generating PDF for cover letter ${coverLetterId}, user ${userId}`);
 
   return writePdfFromLines(res, `${letter.coverLetterId}.pdf`, lines);
 };

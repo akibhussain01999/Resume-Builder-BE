@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const Template = require('../../catalog/template.model');
 const TemplateCategory = require('../../catalog/templateCategory.model');
 const ResumeExample = require('../../catalog/resumeExample.model');
+const logger = require('../../../config/logger');
 
 const seedTemplateCategories = async (categories) => {
   const operations = categories.map((item) => ({
@@ -13,6 +14,7 @@ const seedTemplateCategories = async (categories) => {
   }));
 
   const result = await TemplateCategory.bulkWrite(operations, { ordered: false });
+  logger.info(`Seeded template categories: ${result.upsertedCount} inserted, ${result.modifiedCount} updated`);
   return { matched: result.matchedCount, modified: result.modifiedCount, upserted: result.upsertedCount };
 };
 
@@ -26,6 +28,7 @@ const seedTemplates = async (templates) => {
   }));
 
   const result = await Template.bulkWrite(operations, { ordered: false });
+  logger.info(`Seeded templates: ${result.upsertedCount} inserted, ${result.modifiedCount} updated`);
   return { matched: result.matchedCount, modified: result.modifiedCount, upserted: result.upsertedCount };
 };
 
@@ -68,6 +71,7 @@ const seedResumeExamples = async (payload) => {
   }));
 
   const result = await ResumeExample.bulkWrite(operations, { ordered: false });
+  logger.info(`Seeded resume examples: ${result.upsertedCount} inserted, ${result.modifiedCount} updated`);
   return {
     matched: result.matchedCount,
     modified: result.modifiedCount,

@@ -6,6 +6,7 @@ const ApiError = require('../../utils/ApiError');
 const env = require('../../config/env');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
 const { sendEmailVerificationOtpEmail } = require('../../utils/mailService');
+const logger = require('../../config/logger');
 
 const EMAIL_VERIFICATION_OTP_TTL_MS = 1000 * 60 * 5;
 const GOOGLE_TOKENINFO_URL = 'https://www.googleapis.com/oauth2/v3/tokeninfo';
@@ -139,6 +140,8 @@ const register = async (payload) => {
     emailVerificationTokenExpiresAt: verificationOtpExpiresAt
   });
 
+  logger.info(`User registered: ${user.email}`);
+
   try {
     await sendEmailVerificationOtpEmail({
       toEmail: user.email,
@@ -146,6 +149,7 @@ const register = async (payload) => {
       otp: verificationOtp
     });
   } catch (error) {
+    logger.warn(`Failed to send verification email to ${user.email}: ${error.message}`);
     if (env.allowDevEmailOtpFallback) {
       return {
         user: sanitizeUser(user),
@@ -191,6 +195,8 @@ const login = async (payload) => {
     );
   }
 
+  logger.info(`User logged in: ${user.email}`);
+
   return {
     user: sanitizeUser(user),
     tokens: createTokens(user)
@@ -221,6 +227,8 @@ const googleLogin = async ({ token }) => {
     user.emailVerificationTokenExpiresAt = null;
     await user.save();
   }
+
+  logger.info(`Google login: ${user.email}`);
 
   return {
     user: sanitizeUser(user),

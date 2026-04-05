@@ -7,6 +7,7 @@ const documentRoutes = require('./document/document.routes');
 const adminRoutes = require('./admin/admin.routes');
 const resumeAnalysisRoutes = require('./ats-checker/ats.routes');
 const dynamicResumeRoutes = require('./dynamic-resume-poc/dynamicResume.routes');
+const seoRoutes = require('./seo/seoRoutes');
 
 const router = express.Router();
 
@@ -18,5 +19,6 @@ router.use('/documents', documentRoutes);
 router.use('/admin', adminRoutes);
 router.use('/resume-analysis', resumeAnalysisRoutes);
 router.use('/dynamic-resume', dynamicResumeRoutes);
+router.use('/seo-meta', seoRoutes);
 
 module.exports = router;

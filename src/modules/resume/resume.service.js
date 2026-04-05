@@ -2,6 +2,7 @@ const { StatusCodes } = require('http-status-codes');
 const Resume = require('./resume.model');
 const ApiError = require('../../utils/ApiError');
 const { parsePagination, parseSort } = require('../../utils/query');
+const logger = require('../../config/logger');
 
 const listResumes = async (userId, query) => {
   const { page, limit, skip } = parsePagination(query);
@@ -28,6 +29,8 @@ const createResume = async (userId, payload) => {
     data: payload.data || {}
   });
 
+  logger.info(`Resume created: ${resume.resumeId} for user ${userId}`);
+
   return resume;
 };
 
@@ -52,6 +55,8 @@ const updateResume = async (userId, id, payload) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'RESUME_NOT_FOUND', 'Resume not found');
   }
 
+  logger.info(`Resume updated: ${id} for user ${userId}`);
+
   return resume;
 };
 
@@ -61,6 +66,8 @@ const deleteResume = async (userId, id) => {
   if (!deleted) {
     throw new ApiError(StatusCodes.NOT_FOUND, 'RESUME_NOT_FOUND', 'Resume not found');
   }
+
+  logger.info(`Resume deleted: ${id} for user ${userId}`);
 
   return deleted;
 };
