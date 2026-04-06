@@ -1,5 +1,6 @@
 const express = require('express');
 const authRoutes = require('./auth/auth.routes');
+const userRoutes = require('./user/user.routes');
 const resumeRoutes = require('./resume/resume.routes');
 const coverLetterRoutes = require('./cover-letter/coverLetter.routes');
 const catalogRoutes = require('./catalog/catalog.routes');
@@ -12,6 +13,7 @@ const seoRoutes = require('./seo/seoRoutes');
 const router = express.Router();
 
 router.use('/auth', authRoutes);
+router.use('/user', userRoutes);
 router.use('/resumes', resumeRoutes);
 router.use('/cover-letters', coverLetterRoutes);
 router.use('/', catalogRoutes);

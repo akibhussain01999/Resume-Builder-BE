@@ -46,14 +46,11 @@ const uploadAndAnalyze = async (req, res) => {
         const ATSResume = await getAtsResumeModel();
         const isValidObjectId = mongoose.Types.ObjectId.isValid(userId);
 
-        let createdResume = null;
-        if (isValidObjectId) {
-            createdResume = await ATSResume.create({
-                user_id: userId,
-                resume_json: structuredResume,
-                ats_result: atsResult,
-            });
-        }
+        const createdResume = await ATSResume.create({
+            ...(isValidObjectId && { user_id: userId }),
+            resume_json: structuredResume,
+            ats_result: atsResult,
+        });
 
         res.json({
             success: true,
@@ -83,6 +80,13 @@ const aiRewrite = async (req, res) => {
             });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(resumeId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid resumeId format.",
+            });
+        }
+
         // 1. AI rewrites into fixed DB format
         const rewriteResult = await rewriteResume({
             dynamicJson: dynamicResume,
@@ -95,7 +99,7 @@ const aiRewrite = async (req, res) => {
 
         // 2. Find existing ATS record
         const ATSResume = await getAtsResumeModel();
-        const atsRecord = await ATSResume.findById(new mongoose.Types.ObjectId(String(resumeId)));
+        const atsRecord = await ATSResume.findById(resumeId);
 
         if (!atsRecord) {
             return res.status(404).json({
@@ -104,47 +108,49 @@ const aiRewrite = async (req, res) => {
             });
         }
 
-        const existingImprovedResumeId = atsRecord.improved_resume_id;
+        // 3. Save improved resume to Resume collection (only if a valid userId exists)
+        const resolvedUserId = userId || String(atsRecord.user_id || "");
+        const hasValidUserId = mongoose.Types.ObjectId.isValid(resolvedUserId);
 
-        // 3. Save improved resume to Resume collection (update or create)
-        let improvedResumeId;
-        let savedResume;
+        let improvedResumeId = null;
+        let savedResume = null;
 
-        if (existingImprovedResumeId) {
-            savedResume = await resumeModel.findByIdAndUpdate(
-                existingImprovedResumeId,
-                {
+        if (hasValidUserId) {
+            const existingImprovedResumeId = atsRecord.improved_resume_id;
+
+            if (existingImprovedResumeId) {
+                savedResume = await resumeModel.findByIdAndUpdate(
+                    existingImprovedResumeId,
+                    {
+                        title: rewrittenData.title || "Improved Resume",
+                        data: rewrittenData,
+                    },
+                    { new: true }
+                );
+                improvedResumeId = existingImprovedResumeId;
+            } else {
+                savedResume = await resumeModel.create({
+                    userId: mongoose.Types.ObjectId.createFromHexString(resolvedUserId),
                     title: rewrittenData.title || "Improved Resume",
+                    templateId: templateId || "modern",
+                    themeColor: "#3eb489",
                     data: rewrittenData,
-                },
-                { new: true }
+                });
+                improvedResumeId = savedResume._id;
+            }
+
+            await resumeModel.findByIdAndUpdate(
+                savedResume._id,
+                { resumeId: `resume_${atsRecord._id}` }
             );
-            improvedResumeId = existingImprovedResumeId;
-        } else {
-            savedResume = await resumeModel.create({
-                userId: new mongoose.Types.ObjectId(String(userId || atsRecord.user_id)),
-                title: rewrittenData.title || "Improved Resume",
-                templateId: templateId || "modern",
-                themeColor: "#3eb489",
-                data: rewrittenData,
-            });
-            improvedResumeId = savedResume._id;
         }
 
-        await resumeModel.findByIdAndUpdate(
-            new mongoose.Types.ObjectId(String(savedResume._id)),
-            { resumeId: `resume_${atsRecord._id}` }
-        );
-
         // 4. Update ATS record with improved resume
-        await ATSResume.findByIdAndUpdate(
-            new mongoose.Types.ObjectId(String(resumeId)),
-            {
-                improved_resume_json: rewrittenData,
-                improved_resume_id: improvedResumeId,
-                ats_result: updatedAtsResult,
-            }
-        );
+        await ATSResume.findByIdAndUpdate(resumeId, {
+            improved_resume_json: rewrittenData,
+            ...(improvedResumeId && { improved_resume_id: improvedResumeId }),
+            ats_result: updatedAtsResult,
+        });
 
         res.json({
             success: true,
@@ -154,7 +160,7 @@ const aiRewrite = async (req, res) => {
                     templateId: savedResume?.templateId || "modern",
                     themeColor: savedResume?.themeColor || "#3eb489",
                     hiddenSections: savedResume?.hiddenSections || [],
-                    resumeId: `resume_${atsRecord._id}`,
+                    resumeId: savedResume ? `resume_${atsRecord._id}` : null,
                 },
                 updatedAtsResult,
             },
