@@ -327,7 +327,18 @@ const mapDynamicToOriginal = (dynamicJson) => {
             case "interests":
             case "certifications":
             case "courses":
-                original[field].push(...sectionToStringArray(section));
+                if (section.type === "timeline") {
+                    original[field].push(
+                        ...(section.items || []).map((item) => {
+                            const parts = [item.title].filter(Boolean);
+                            if (item.subtitle) parts.push(item.subtitle);
+                            if (item.date) parts.push(`(${item.date})`);
+                            return parts.join(" — ");
+                        })
+                    );
+                } else {
+                    original[field].push(...sectionToStringArray(section));
+                }
                 break;
 
             case "languages":

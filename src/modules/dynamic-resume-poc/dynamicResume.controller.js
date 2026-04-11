@@ -7,6 +7,7 @@ const {
     parseLinkedInToResume,
 } = require("./dynamicResume.service");
 const { mapDynamicToOriginal } = require("./dynamicToOriginal.mapper");
+const { mapDynamicToBuilder } = require("./dynamicToBuilder.mapper");
 const resumeModel = require("../resume/resume.model");
 const mongoose = require("mongoose");
 
@@ -66,6 +67,59 @@ const uploadAndAnalyze = async (req, res) => {
         });
     } catch (err) {
         console.error("[dynamic-resume-poc] uploadAndAnalyze error:", err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// ─── Upload resume → dynamic JSON + save to Resume DB (no ATS) ───
+const uploadAndEdit = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res
+                .status(400)
+                .json({ success: false, message: "No file uploaded." });
+        }
+
+        const userId = req.body.userId || null;
+        const templateId = req.body.templateId || "modern";
+
+        // 1. Extract text from PDF/doc
+        const resumeText = await extractTextFromFile(req.file.buffer, req.file);
+
+        // 2. Parse into dynamic JSON
+        const dynamicJson = await parseDynamicResume(resumeText);
+
+        // 3. Map to builder-ready format
+        const structuredResume = mapDynamicToBuilder(dynamicJson);
+
+        // 4. Save to Resume collection if valid userId
+        let savedResumeId = null;
+        if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+            const savedResume = await resumeModel.create({
+                userId: mongoose.Types.ObjectId.createFromHexString(userId),
+                title: structuredResume.name
+                    ? `${structuredResume.name} — Uploaded Resume`
+                    : "Uploaded Resume",
+                templateId,
+                themeColor: "#6366f1",
+                data: structuredResume,
+            });
+            await resumeModel.findByIdAndUpdate(savedResume._id, {
+                resumeId: `resume_${savedResume._id}`,
+            });
+            savedResumeId = String(savedResume._id);
+        }
+
+        res.json({
+            success: true,
+            data: {
+                resumeId: savedResumeId,
+                dynamicResume: dynamicJson,
+                structuredResume,
+            },
+        });
+    } catch (err) {
+        console.error("[dynamic-resume-poc] uploadAndEdit error:", err);
         res.status(500).json({ success: false, message: err.message });
     }
 };
@@ -327,6 +381,7 @@ const linkedinImport = async (req, res) => {
 
 module.exports = {
     uploadAndAnalyze,
+    uploadAndEdit,
     aiRewrite,
     uploadAndParse,
     parseFromText,
