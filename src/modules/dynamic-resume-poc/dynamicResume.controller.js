@@ -3,6 +3,8 @@ const {
     parseDynamicResume,
     analyzeDynamicResume,
     rewriteResume,
+    fetchLinkedInProfile,
+    parseLinkedInToResume,
 } = require("./dynamicResume.service");
 const { mapDynamicToOriginal } = require("./dynamicToOriginal.mapper");
 const resumeModel = require("../resume/resume.model");
@@ -231,10 +233,103 @@ const uploadAndMap = async (req, res) => {
     }
 };
 
+// ─── LinkedIn Import: URL (via ProxyCurl) or pasted text → dynamic JSON + structured resume ───
+const linkedinImport = async (req, res) => {
+    try {
+        const { linkedinUrl, linkedinText, userId, jobDescription, templateId } = req.body;
+
+        if (!linkedinUrl && !linkedinText) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Provide either 'linkedinUrl' (requires PROXYCURL_API_KEY) or 'linkedinText' (paste your LinkedIn profile text).",
+            });
+        }
+
+        let dynamicJson;
+
+        if (linkedinText && linkedinText.trim()) {
+            // ── Text-paste mode: parse the pasted LinkedIn profile text directly ──
+            dynamicJson = await parseDynamicResume(linkedinText.trim());
+
+            // Inject LinkedIn URL into contacts if provided alongside text
+            if (linkedinUrl) {
+                if (!dynamicJson.header.contacts) dynamicJson.header.contacts = [];
+                const hasLinkedIn = dynamicJson.header.contacts.some(
+                    (c) => c.type === "linkedin"
+                );
+                if (!hasLinkedIn) {
+                    dynamicJson.header.contacts.unshift({
+                        type: "linkedin",
+                        value: linkedinUrl.trim(),
+                    });
+                }
+            }
+            dynamicJson.meta = {
+                ...dynamicJson.meta,
+                source: "linkedin_text",
+                ...(linkedinUrl && { linkedinUrl: linkedinUrl.trim() }),
+            };
+        } else {
+            // ── URL mode: fetch via ProxyCurl API ──
+            const profileContent = await fetchLinkedInProfile(linkedinUrl.trim());
+            dynamicJson = await parseLinkedInToResume(profileContent, linkedinUrl.trim());
+        }
+
+        // 3. Map to original fixed format
+        const structuredResume = mapDynamicToOriginal(dynamicJson);
+
+        // 4. Optionally run ATS analysis if jobDescription provided
+        let atsResult = null;
+        if (jobDescription && jobDescription.trim()) {
+            atsResult = await analyzeDynamicResume(dynamicJson, jobDescription);
+        }
+
+        // 5. Save to DB if a valid userId is present
+        let savedResumeId = null;
+        if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+            const savedResume = await resumeModel.create({
+                userId: mongoose.Types.ObjectId.createFromHexString(userId),
+                title: structuredResume.name
+                    ? `${structuredResume.name} — LinkedIn Import`
+                    : "LinkedIn Import",
+                templateId: templateId || "modern",
+                themeColor: "#0077b5",
+                data: structuredResume,
+            });
+            await resumeModel.findByIdAndUpdate(savedResume._id, {
+                resumeId: `resume_${savedResume._id}`,
+            });
+            savedResumeId = `resume_${savedResume._id}`;
+        }
+
+        res.json({
+            success: true,
+            data: {
+                resumeId: savedResumeId,
+                dynamicResume: dynamicJson,
+                structuredResume,
+                ...(atsResult && { atsResult }),
+            },
+        });
+    } catch (err) {
+        console.error("[dynamic-resume-poc] linkedinImport error:", err);
+        const isUserFacing =
+            err.message.includes("LinkedIn") ||
+            err.message.includes("Invalid LinkedIn") ||
+            err.message.includes("timed out");
+        res.status(isUserFacing ? 422 : 500).json({
+            success: false,
+            message: err.message,
+        });
+    }
+};
+
 module.exports = {
     uploadAndAnalyze,
     aiRewrite,
     uploadAndParse,
     parseFromText,
     uploadAndMap,
+    linkedinImport,
 };

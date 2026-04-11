@@ -6,6 +6,7 @@ const {
     uploadAndParse,
     parseFromText,
     uploadAndMap,
+    linkedinImport,
 } = require("./dynamicResume.controller");
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -17,6 +18,9 @@ router.post("/upload-and-analyze", upload.single("resume"), uploadAndAnalyze);
 
 // Step 2: AI rewrite → dynamic JSON + ATS result → fixed DB format
 router.post("/ai-rewrite", aiRewrite);
+
+// ─── LinkedIn Import ───
+router.post("/linkedin-import", linkedinImport);
 
 // ─── Utility endpoints ───
 router.post("/upload", upload.single("resume"), uploadAndParse);
